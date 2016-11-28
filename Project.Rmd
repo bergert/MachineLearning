@@ -1,0 +1,137 @@
+---
+title: "Exercise Intensity"
+output: 
+   html_document:
+      number_section: yes
+      toc: yes
+      theme: united
+author: "Thomas Berger"
+date: "November 29, 2016"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+# Get and clean data
+
+```{r}
+   # getting data
+   trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+   trainFile <- "pml-training.csv"
+   testURL  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+   testFile <- "pml-testing.csv"
+   if (!file.exists(trainFile)) {
+	    # if not exists, download it
+		download.file(trainURL, trainFile)
+        write(date(), file = "pml-training.log")
+   }
+   if (!file.exists(testFile)) {
+	    # if not exists, download it
+		download.file(testURL, testFile)
+        write(date(), file = "pml-testing.log")
+   }
+   # loading data
+   trainData <- read.csv(trainFile, na.strings = c("NA", "", NULL))
+   testData <- read.csv(testFile, na.strings = c("NA", "", NULL))
+   
+   dim(trainData)
+   dim(testData)
+```
+
+The dataset contains some 'DIV/0' strings; these are mapped to NA as well.
+```{r}
+   levels(trainData$kurtosis_yaw_dumbbell)
+   trainData <- read.csv(trainFile, na.strings = c("NA", "", NULL, "#DIV/0!"))
+   testData <- read.csv(testFile, na.strings = c("NA", "", NULL, "#DIV/0!"))
+```
+
+Next, remove all columns which contain NA values; this is done by comparing the number of columns to the number of NA also remove all columns which contain the string "timestamp". They don't contribute to the model. 
+```{r}
+   # get NA columns from training and test data
+   NA_Columns1 <- which(colSums(is.na(trainData)) != 0)
+   NA_Columns2 <- which(colSums(is.na(testData)) != 0)
+   NA_Columns  <- unique (rbind(NA_Columns1,NA_Columns2))
+   # additional columns to remove
+   REM_Columns <- c("X","user_name","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window")
+   # cleaned training data
+   trainData2 <- trainData[,-NA_Columns]
+   trainData2 <- trainData2[, !(names(trainData2) %in% REM_Columns)] 
+   # cleaned test data
+   testData2 <- testData[,-NA_Columns]
+   testData2 <- testData2[, !(names(testData2) %in% REM_Columns)] 
+   dim(trainData2)
+```
+
+# Preprocessing the data
+
+Next, I split the cleaned training dataset into a training dataset (70% of the observations) and a validation dataset (30% of the observations). This validation dataset will allow us to perform cross validation when developing our model.
+```{r}
+   library(caret)
+   inTrain <- createDataPartition(y = trainData2$classe, p = 0.7, list = FALSE)
+   trainData2_train <- trainData2[inTrain,]
+   trainData2_valid <- trainData2[-inTrain,]
+   # the training dataset now contains 53 columns
+   dim(trainData2_train)
+```
+
+Pre-process the data using a principal component analysis, leaving out column 53 (‘classe’). This will reduce the number of predictor. After pre-processing, use the ‘predict’ function to apply the pre-processing to both the training and validation subsets of the ‘training’ dataset.
+```{r}
+   preProcess <- preProcess(trainData2_train[, -53], method = "pca", thresh = 0.99)
+   trainPCA <- predict(preProcess, trainData2_train[, -53])
+   validPCA <- predict(preProcess, trainData2_valid[, -53])
+```
+
+# Choosing/Calculate the model
+
+The authors of the original paper <http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf> used the _Random Forest approach_ (refer to 5.2 Recognition Performance), and we confirm it is the most accurate model. Therefore we use the RF model.
+
+```{r message=F}
+   set.seed(12345)
+   library(caret)
+   library(randomForest)
+   #model <- randomForest(classe ~ ., data = trainData2_train, ntree = 100)
+   model <- randomForest(classe ~ ., data = trainData2_train)
+   model
+
+   # show top variables of importance
+   imp <- varImp(model)
+   imp$Variable <- rownames(imp)
+   print(imp[order(imp$Overall, decreasing = T),"Overall", drop=FALSE][1:20,, drop=FALSE])  
+```
+By far the most significant variable is 'roll_belt'.
+
+# Cross-Validation and Error margins
+
+Use the predict function, to predict accuracy on the validation dataset. 
+```{r}
+   predictRF <- predict(model, trainData2_valid)
+   accur <- postResample(trainData2_valid$classe, predictRF)
+
+   # model accuracy
+   round(accur[[1]]*100,1)
+
+   # out of sample error
+   round((1 - accur[[1]])*100,1)
+```
+
+The estimated accuracy of our model is `r round(accur[[1]]*100,1)` %, and the estimated out-of-sample error based on our fitted model applied to the cross-validation dataset is `r round((1 - accur[[1]])*100,1)` %.
+
+# Predicted Results/Summary
+
+Last, apply the model to the test data, and predict the result using the model.
+
+```{r}
+   pred_final <- predict(model, testData2)
+   pred_final
+```
+
+# References
+
+* <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset)
+* <http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201> publication
+* <http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf> paper
